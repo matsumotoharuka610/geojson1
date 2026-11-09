@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>教育施設マップ</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Yu Gothic", "Meiryo", sans-serif;
+      color: #222;
+      background: #f5f6f8;
+    }
+    header { padding: 14px 20px; background: #243b53; color: white; }
+    header h1 { margin: 0 0 5px; font-size: 21px; }
+    header p { margin: 0; font-size: 13px; opacity: .9; }
+    #status {
+      padding: 10px 16px;
+      background: white;
+      border-bottom: 1px solid #ddd;
+      font-size: 14px;
+    }
+    #filters {
+      padding: 12px 16px;
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+    }
+    .filter-heading {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 9px;
+    }
+    .filter-heading strong { font-size: 14px; }
+    .filter-actions { display: flex; gap: 8px; }
+    .filter-actions button {
+      padding: 4px 10px;
+      border: 1px solid #b8c2cc;
+      border-radius: 4px;
+      background: #f8fafc;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .filter-actions button:hover { background: #e8eef4; }
+    #type-options {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 16px;
+    }
+    .type-option {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 13px;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .type-option input { cursor: pointer; }
+    .type-dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+    }
+    #map { width: 100%; height: calc(100vh - 220px); min-height: 360px; }
+    .error { color: #b42318; font-weight: bold; }
+    .legend {
+      background: white;
+      padding: 9px 12px;
+      line-height: 1.6;
+      border-radius: 5px;
+      box-shadow: 0 1px 5px rgba(0,0,0,.25);
+      font-size: 12px;
+    }
+    .legend i {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+    }
+    .popup-title { font-weight: bold; font-size: 14px; margin-bottom: 6px; }
+    .popup-table { border-collapse: collapse; font-size: 12px; }
+    .popup-table th, .popup-table td {
+      padding: 3px 5px;
+      border-bottom: 1px solid #ddd;
+      text-align: left;
+      vertical-align: top;
+    }
+    .popup-table th { white-space: nowrap; color: #555; }
+    @media (max-width: 600px) {
+      header h1 { font-size: 18px; }
+      #map { height: calc(100vh - 270px); min-height: 330px; }
+      #type-options { gap: 8px 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>教育施設マップ</h1>
+    <p>表示する学校の種類を選択できます。マーカーをクリックすると施設情報を確認できます。</p>
+  </header>
+
+  <div id="status">GeoJSONデータを読み込んでいます...</div>
+  <section id="filters" aria-label="表示する学校の種類">
+    <div class="filter-heading">
+      <strong>表示する種別コードを選択</strong>
+      <div class="filter-actions">
+        <button type="button" id="select-all">すべて選択</button>
+        <button type="button" id="clear-all">すべて解除</button>
+      </div>
+    </div>
+    <div id="type-options">データ読み込み後に選択肢が表示されます。</div>
+  </section>
+  <div id="map"></div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    // HTMLファイルと同じフォルダに置いたGeoJSONファイル
+    const GEOJSON_FILE = "./P29-23_13.geojson";
+
+    const map = L.map("map");
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+    }).addTo(map);
+
+    const schoolTypes = {
+      "16001": "小学校",
+      "16002": "中学校",
+      "16003": "中等教育学校",
+      "16004": "高等学校",
+      "16005": "高等専門学校",
+      "16006": "短期大学",
+      "16007": "大学",
+      "16011": "幼稚園",
+      "16012": "特別支援学校",
+      "16013": "幼保連携型認定こども園",
+      "16014": "義務教育学校",
+      "16015": "各種学校",
+      "16016": "専修学校"
+    };
+
+    const typeColors = {
+      "16001": "#e74c3c", "16002": "#3498db", "16003": "#8e44ad",
+      "16004": "#f39c12", "16005": "#16a085", "16006": "#d35400",
+      "16007": "#2c3e50", "16011": "#e84393", "16012": "#7f8c8d",
+      "16013": "#27ae60", "16014": "#6c5ce7", "16015": "#00a8cc",
+      "16016": "#795548"
+    };
+
+    let allFeatures = [];
+    let markerLayer = L.featureGroup().addTo(map);
+    let availableCodes = [];
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function getProperty(properties, key) {
+      const value = properties?.[key];
+      return value === null || value === undefined || value === "" ? "情報なし" : value;
+    }
+
+    function createPopup(properties) {
+      const name = getProperty(properties, "P29_004");
+      const code = String(getProperty(properties, "P29_003"));
+      const typeName = schoolTypes[code] || `分類コード：${code}`;
+
+      return `
+        <div class="popup-title">${escapeHtml(name)}</div>
+        <table class="popup-table">
+          <tr><th>学校の種類</th><td>${escapeHtml(typeName)}</td></tr>
+          <tr><th>種別コード</th><td>${escapeHtml(code)}</td></tr>
+          <tr><th>所在地</th><td>${escapeHtml(getProperty(properties, "P29_005"))}</td></tr>
+          <tr><th>学校コード</th><td>${escapeHtml(getProperty(properties, "P29_002"))}</td></tr>
+          <tr><th>管理者コード</th><td>${escapeHtml(getProperty(properties, "P29_006"))}</td></tr>
+          <tr><th>休校区分</th><td>${escapeHtml(getProperty(properties, "P29_007"))}</td></tr>
+          <tr><th>キャンパスコード</th><td>${escapeHtml(getProperty(properties, "P29_008"))}</td></tr>
+          <tr><th>備考</th><td>${escapeHtml(getProperty(properties, "P29_009"))}</td></tr>
+        </table>`;
+    }
+
+    // チェックされている種別コードを取得
+    function getSelectedCodes() {
+      return Array.from(document.querySelectorAll("#type-options input[type='checkbox']:checked"))
+        .map(input => input.value);
+    }
+
+    // チェック状態に応じてマーカーを再描画
+    function updateMarkers() {
+      const selectedCodes = getSelectedCodes();
+      const filteredFeatures = allFeatures.filter(feature => {
+        const code = String(feature.properties?.P29_003 ?? "");
+        return selectedCodes.includes(code);
+      });
+
+      markerLayer.clearLayers();
+
+      const filteredGeoJSON = {
+        type: "FeatureCollection",
+        features: filteredFeatures
+      };
+
+      L.geoJSON(filteredGeoJSON, {
+        pointToLayer: (feature, latlng) => {
+          const code = String(feature.properties?.P29_003 ?? "");
+          const color = typeColors[code] || "#666666";
+          return L.circleMarker(latlng, {
+            radius: 5,
+            color: "#ffffff",
+            weight: 1,
+            fillColor: color,
+            fillOpacity: 0.85
+          });
+        },
+        onEachFeature: (feature, layer) => {
+          layer.bindPopup(createPopup(feature.properties || {}));
+        }
+      }).eachLayer(layer => markerLayer.addLayer(layer));
+
+      if (markerLayer.getLayers().length > 0) {
+        map.fitBounds(markerLayer.getBounds(), { padding: [25, 25] });
+      }
+
+      document.getElementById("status").textContent =
+        `表示中：${filteredFeatures.length.toLocaleString()}件 / 全${allFeatures.length.toLocaleString()}件（${selectedCodes.length}種類を選択中）`;
+    }
+
+    // GeoJSONに実際に含まれる種別コードからチェックボックスを作成
+    function createTypeFilters() {
+      const counts = {};
+      allFeatures.forEach(feature => {
+        const code = String(feature.properties?.P29_003 ?? "不明");
+        counts[code] = (counts[code] || 0) + 1;
+      });
+
+      availableCodes = Object.keys(counts).sort();
+      const container = document.getElementById("type-options");
+      container.innerHTML = "";
+
+      availableCodes.forEach(code => {
+        const label = document.createElement("label");
+        label.className = "type-option";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = code;
+        checkbox.checked = true;
+        checkbox.addEventListener("change", updateMarkers);
+
+        const dot = document.createElement("span");
+        dot.className = "type-dot";
+        dot.style.backgroundColor = typeColors[code] || "#666666";
+
+        const name = schoolTypes[code] || (code === "不明" ? "不明" : "その他");
+        const text = document.createElement("span");
+        text.textContent = `${name}（${code}）：${counts[code].toLocaleString()}件`;
+
+        label.append(checkbox, dot, text);
+        container.appendChild(label);
+      });
+    }
+
+    document.getElementById("select-all").addEventListener("click", () => {
+      document.querySelectorAll("#type-options input[type='checkbox']")
+        .forEach(input => input.checked = true);
+      updateMarkers();
+    });
+
+    document.getElementById("clear-all").addEventListener("click", () => {
+      document.querySelectorAll("#type-options input[type='checkbox']")
+        .forEach(input => input.checked = false);
+      updateMarkers();
+    });
+
+    // 凡例
+    const legend = L.control({ position: "bottomright" });
+    legend.onAdd = function () {
+      const div = L.DomUtil.create("div", "legend");
+      div.innerHTML = "<strong>学校の種類（色）</strong><br>";
+      Object.entries(schoolTypes).forEach(([code, name]) => {
+        div.innerHTML += `<div><i style="background:${typeColors[code]}"></i>${escapeHtml(name)}</div>`;
+      });
+      div.innerHTML += '<div><i style="background:#666666"></i>その他</div>';
+      return div;
+    };
+    legend.addTo(map);
+
+    // GeoJSON読み込み
+    fetch(GEOJSON_FILE)
+      .then(response => {
+        if (!response.ok) {
+          throw new Error(`ファイルを読み込めませんでした（HTTP ${response.status}）。`);
+        }
+        return response.json();
+      })
+      .then(geojson => {
+        if (!geojson.features || !Array.isArray(geojson.features)) {
+          throw new Error("GeoJSONの形式がFeatureCollectionではありません。");
+        }
+
+        allFeatures = geojson.features;
+        createTypeFilters();
+        updateMarkers();
+
+        if (markerLayer.getLayers().length === 0) {
+          map.setView([35.6812, 139.7671], 11);
+        }
+      })
+      .catch(error => {
+        console.error("GeoJSON読み込みエラー:", error);
+        const status = document.getElementById("status");
+        status.className = "error";
+        status.textContent =
+          "GeoJSONを読み込めませんでした。" + error.message +
+          " HTMLファイルとGeoJSONファイルが同じフォルダにあることを確認し、ローカルサーバー経由で開いてください。";
+      });
+  </script>
+</body>
+</html>
